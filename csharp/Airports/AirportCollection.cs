@@ -7,10 +7,11 @@ namespace ParagonCodingExercise.Airports
 {
     public class AirportCollection
     {
-        
-        public AirportCollection(List<Airport> airports)
+        public List<Airport> Airports;
+
+        public AirportCollection(List<Airport> airportsList)
         {
-            throw new NotImplementedException();
+            Airports = airportsList;
         }
 
         public static AirportCollection LoadFromFile(string filePath)

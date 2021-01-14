@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace ParagonCodingExercise
+namespace ParagonCodingExercise.Flights
 {
     public class Flight
     {
