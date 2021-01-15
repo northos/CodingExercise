@@ -30,7 +30,20 @@ namespace ParagonCodingExercise.Airports
 
         public Airport GetClosestAirport(GeoCoordinate coordinate)
         {
-            throw new NotImplementedException();
+            Airport closestAirport = Airports[0];
+            GeoCoordinate airportCoordinate = new GeoCoordinate(closestAirport.Latitude, closestAirport.Longitude);
+            double closestDistance = coordinate.GetDistanceTo(airportCoordinate);
+            foreach (Airport airport in Airports)
+            {
+                airportCoordinate = new GeoCoordinate(airport.Latitude, airport.Longitude);
+                double airportDistance = coordinate.GetDistanceTo(airportCoordinate);
+                if (airportDistance < closestDistance)
+                {
+                    closestAirport = airport;
+                    closestDistance = airportDistance;
+                }
+            }
+            return closestAirport;
         }
     }
 }

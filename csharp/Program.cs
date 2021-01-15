@@ -8,6 +8,13 @@ namespace ParagonCodingExercise
 {
     class Program
     {
+        private enum FlightStatus
+        {
+            Unknown,
+            Air,
+            Ground
+        }
+
         private static string AirportsFilePath = @".\Resources\airports.json";
 
         // Location of ADS-B events
@@ -15,6 +22,11 @@ namespace ParagonCodingExercise
 
         // Write generated flights here
         private static string OutputFilePath = @".\Resources\flights.txt";
+
+        private static double DistanceThreshold = 3f;
+        private static double AltitudeThreshold = 200f;
+        private static double SpeedThreshold = 50f;
+        private static int TimeThreshold = 10;
 
         static void Main(string[] args)
         {
@@ -28,30 +40,46 @@ namespace ParagonCodingExercise
             // Load the input data
             AirportCollection airports = AirportCollection.LoadFromFile(AirportsFilePath);
             AdsbEventCollection events = AdsbEventCollection.LoadFromFile(AdsbEventsFilePath);
+            
+            // Create collection of identifiable flights
+            FlightCollection flights = CalculateFlights(airports, events);
 
+            // Write the output data
+            flights.WriteToFile(OutputFilePath);
+        }
+
+        private static FlightCollection CalculateFlights(AirportCollection airports, AdsbEventCollection events)
+        {
             // Organize all ADS-B events by aircraft ID
+            FlightCollection flights = new FlightCollection();
             Dictionary<string, List<AdsbEvent>> eventsByID = new Dictionary<string, List<AdsbEvent>>();
             foreach (AdsbEvent adsbEvent in events.Events)
             {
                 if(!eventsByID.ContainsKey(adsbEvent.Identifier))
                 {
                     eventsByID.Add(adsbEvent.Identifier, new List<AdsbEvent>());
+                    eventsByID[adsbEvent.Identifier].Add(adsbEvent);
                 }
-                eventsByID[adsbEvent.Identifier].Add(adsbEvent);
+                else
+                {
+                    // Remove events that are soon after the previous one to improve performance
+                    int eventCount = eventsByID[adsbEvent.Identifier].Count;
+                    AdsbEvent lastEvent = eventsByID[adsbEvent.Identifier][eventCount - 1];
+                    TimeSpan timeDiff = adsbEvent.Timestamp - lastEvent.Timestamp;
+                    if (timeDiff.TotalSeconds >= TimeThreshold)
+                    {
+                        eventsByID[adsbEvent.Identifier].Add(adsbEvent);
+                    }
+                }
             }
-            
-            // Create collection of identifiable flights
-            FlightCollection flights = new FlightCollection();
 
-            // For each aircraft identifier, sort the logged events by timestamp and step through to identify flights
+            // For each aircraft identifier, step through the logged events in sequence to identify flights
             foreach (string identifier in eventsByID.Keys)
             {
                 List<AdsbEvent> eventLog = eventsByID[identifier];
-                eventLog.Sort((x, y) => x.Timestamp.CompareTo(y.Timestamp));
-
-                string flightState = "unknown";
+                FlightStatus flightStatus = FlightStatus.Unknown;
                 Airport lastAirport = new Airport();
-                DateTime departureTime = DateTime.MinValue;
+                DateTime lastGroundTime = DateTime.MinValue;
                 foreach (AdsbEvent adsbEvent in eventLog)
                 {
                     // Find closest airport to the logged coordinates, as long as the event has coordinate values
@@ -61,34 +89,53 @@ namespace ParagonCodingExercise
                         Airport closestAirport = airports.GetClosestAirport(eventLoc);
                         GeoCoordinate airportLoc = new GeoCoordinate(closestAirport.Latitude, closestAirport.Longitude);
                         double airportDistance = eventLoc.GetDistanceTo(airportLoc);
+                        double altitudeDiff = adsbEvent.Altitude.HasValue ? Math.Abs(adsbEvent.Altitude.Value - closestAirport.Elevation) : 0f;
+                        double speed = adsbEvent.Speed ?? 0f;
 
-                        // If event was logged within 2 miles of an airport and the aircraft was last known to be flying,
-                        //  assume it has landed at that airport, and create a new Flight record
-                        if (airportDistance <= 2f && flightState == "flying")
+                        // If the event was logged close to an airport, assume the aircraft has landed at that airport
+                        if (airportDistance <= DistanceThreshold && altitudeDiff <= AltitudeThreshold && speed <= SpeedThreshold)
                         {
-                            flightState = "landed";
-                            flights.Flights.Add(new Flight
+                            // If this is not the first event (status unknown) and the new closest airport is different, create a new completed flight record
+                            if (flightStatus != FlightStatus.Unknown && closestAirport.Identifier != lastAirport.Identifier)
                             {
-                                AircraftIdentifier = identifier,
-                                DepartureTime = departureTime,
-                                DepartureAirport = lastAirport.Identifier,
-                                ArrivalTime = adsbEvent.Timestamp,
-                                ArrivalAirport = closestAirport.Identifier
-                            });
+                                flights.Flights.Add(new Flight
+                                {
+                                    AircraftIdentifier = identifier,
+                                    DepartureTime = lastGroundTime,
+                                    DepartureAirport = lastAirport.Identifier,
+                                    ArrivalTime = adsbEvent.Timestamp,
+                                    ArrivalAirport = closestAirport.Identifier
+                                });
+                            }
+                            // In any case, update the status for the new airport
+                            flightStatus = FlightStatus.Ground;
                             lastAirport = closestAirport;
+                            lastGroundTime = adsbEvent.Timestamp;
                         }
-                        // If the aircraft was last known to be at an airport, or has no known status, assume it has departed and record the time
-                        else if (flightState == "landed" || flightState == "unknown")
+                        // If the aircraft is not close to an airport and was not previously flying, set the status to airborne
+                        else if ((airportDistance > DistanceThreshold || altitudeDiff > AltitudeThreshold) && flightStatus != FlightStatus.Air)
                         {
-                            flightState = "flying";
-                            departureTime = adsbEvent.Timestamp;
+                            flightStatus = FlightStatus.Air;
                         }
+                        // Otherwise, assume no status change
                     }
+                }
+
+                // If all events have been read and the aircraft was last known to be flying, record a final flight with no arrival
+                if (flightStatus == FlightStatus.Air)
+                {
+                    flights.Flights.Add(new Flight
+                    {
+                        AircraftIdentifier = identifier,
+                        DepartureTime = lastGroundTime,
+                        DepartureAirport = lastAirport.Identifier,
+                        ArrivalTime = DateTime.MaxValue,
+                        ArrivalAirport = null
+                    });
                 }
             }
 
-            // Write the output data
-            flights.WriteToFile(OutputFilePath);
+            return flights;
         }
     }
 }

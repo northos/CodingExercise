@@ -21,10 +21,14 @@ namespace ParagonCodingExercise.Events
                 throw new FileNotFoundException("File not found", filePath);
             }
 
+            List<AdsbEvent> events = new List<AdsbEvent>();
             using TextReader reader = new StreamReader(filePath);
-            var json = reader.ReadToEnd();
-
-            var events = JsonSerializer.Deserialize<List<AdsbEvent>>(json);
+            string json = reader.ReadLine();
+            while (json != null)
+            {
+                events.Add(AdsbEvent.FromJson(json));
+                json = reader.ReadLine();
+            }
             return new AdsbEventCollection(events);
         }
     }
